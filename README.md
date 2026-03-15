@@ -73,7 +73,7 @@ The generated APK will be located at:
 
 ## Project Preview
 
-`<img src="https://github.com/juanma0511/Android_Root_Detector/blob/main/art/preview.jpg" width="350">`{=html}
+<img src="https://github.com/juanma0511/Android_Root_Detector/blob/main/art/preview.jpg" width="350">
 
 ------------------------------------------------------------------------
 
