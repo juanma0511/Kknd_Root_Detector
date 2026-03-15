@@ -1,5 +1,6 @@
 # Android Root Detector
 
+<<<<<<< HEAD
 Android Root Detector is a lightweight Android application that checks whether a device may be rooted or running in a potentially insecure environment.
 
 The project demonstrates common techniques used by security‑sensitive Android apps to detect root access and system modifications.
@@ -9,12 +10,29 @@ This project is intended mainly for:
 - Developers implementing root detection 
 - Reverse engineering practice 
 - Educational demonstrations
+=======
+Android Root Detector is a lightweight Android application that checks
+whether a device may be rooted or running in a potentially insecure
+environment.
+
+The project demonstrates common techniques used by security‑sensitive
+Android apps to detect root access and system modifications.
+
+This project is intended mainly for: - Android security learning -
+Developers implementing root detection - Reverse engineering practice -
+Educational demonstrations
+>>>>>>> ce223caf701d70cb0a0c34b913cd423435b76923
 
 ------------------------------------------------------------------------
 
 ## Features
 
+<<<<<<< HEAD
 The application performs several checks typically used in root detection systems:
+=======
+The application performs several checks typically used in root detection
+systems:
+>>>>>>> ce223caf701d70cb0a0c34b913cd423435b76923
 
 -   Detection of **`su` binary** in common system paths
 -   Detection of **known root management apps**
@@ -109,4 +127,9 @@ If you find a bug:
 ## Disclaimer
 
 This project is provided for **educational and research purposes only**.
+<<<<<<< HEAD
 Do not use it to bypass security protections in applications without authorization.
+=======
+Do not use it to bypass security protections in applications without
+authorization.
+>>>>>>> ce223caf701d70cb0a0c34b913cd423435b76923
