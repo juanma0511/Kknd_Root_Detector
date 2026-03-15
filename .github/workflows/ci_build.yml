@@ -10,37 +10,33 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Java (required for AGP)
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
           cache: gradle
 
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3
 
-      - name: Install required SDK components
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses
+
+      - name: Install required SDK versions
         run: |
           sdkmanager --install "platform-tools"
           sdkmanager --install "platforms;android-34"
           sdkmanager --install "build-tools;34.0.0"
           sdkmanager --install "cmdline-tools;latest"
 
-      - name: Accept licenses
-        run: yes | sdkmanager --licenses
-
-      - name: Gradle wrapper permission
+      - name: Gradle permission
         run: chmod +x gradlew
 
-      - name: Build debug APK
-        run: gradlew assembleDebug --stacktrace --no-daemon
+      - name: Build
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
+          name: app-debug
           path: app/build/outputs/apk/debug/*.apk
