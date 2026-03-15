@@ -1,41 +1,37 @@
-name: Android CI
+name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - "feature/**"
   pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v5
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
         with:
-          distribution: 'temurin'
           java-version: '21'
-          cache: gradle
+          distribution: 'temurin'
 
-      - uses: android-actions/setup-android@v5
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
         with:
-          gradle-version: '9.3.1' 
+          gradle-version: '9.3.1'
 
-      - name: Accept licenses
-        run: yes | sdkmanager --licenses
-
-      - name: Install required SDK versions
-        run: |
-          sdkmanager --install "platform-tools"
-          sdkmanager --install "platforms;android-34"
-          sdkmanager --install "build-tools;34.0.0"
-          sdkmanager --install "cmdline-tools;latest"
-
-      - name: Build
+      - name: Build Debug APK
         run: ./gradlew assembleDebug
 
-      - uses: actions/upload-artifact@v5
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v5
         with:
           name: Root-Detector-debug
           path: app/build/outputs/apk/debug/*.apk
