@@ -69,7 +69,7 @@ Clone the repository:
 
 ``` bash
 git clone https://github.com/juanma0511/Kknd_Root_Detector.git
-cd Android_Root_Detector
+cd Kknd_Root_Detector
 ```
 
 Open the project with **Android Studio** and build it normally.
@@ -88,7 +88,7 @@ The generated APK will be located at:
 
 ## Project Preview
 
-<img src="https://github.com/juanma0511/Kknd_Root_Detector/blob/main/art/preview.jpg" width="350">
+<img src="https://github.com/juanma0511/Kknd_Root_Detector/blob/main/art/rootdetection.jpg" width="350">
 
 ------------------------------------------------------------------------
 
