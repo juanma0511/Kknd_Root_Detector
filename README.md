@@ -1,6 +1,6 @@
-# Android Root Detector
+# Kknd Root Detector
 
-Android Root Detector is a lightweight Android application that checks whether a device may be rooted or running in a potentially insecure environment.
+Kknd Root Detector is a lightweight Android application that checks whether a device may be rooted or running in a potentially insecure environment.
 
 The project demonstrates common techniques used by security‑sensitive Android apps to detect root access and system modifications.
 
@@ -10,7 +10,7 @@ This project is intended mainly for:
 - Reverse engineering practice 
 - Educational demonstrations
   
-Android Root Detector is a lightweight Android application that checks
+Kknd Root Detector is a lightweight Android application that checks
 whether a device may be rooted or running in a potentially insecure
 environment.
 
@@ -48,7 +48,7 @@ compromised.
 
 You can download the latest APK from the **GitHub Releases page**:
 
-https://github.com/juanma0511/Android_Root_Detector/releases
+https://github.com/juanma0511/Kknd_Root_Detector/releases
 
 Or build it yourself following the instructions below.
 
@@ -68,7 +68,7 @@ Or build it yourself following the instructions below.
 Clone the repository:
 
 ``` bash
-git clone https://github.com/juanma0511/Android_Root_Detector.git
+git clone https://github.com/juanma0511/Kknd_Root_Detector.git
 cd Android_Root_Detector
 ```
 
@@ -88,7 +88,7 @@ The generated APK will be located at:
 
 ## Project Preview
 
-<img src="https://github.com/juanma0511/Android_Root_Detector/blob/main/art/preview.jpg" width="350">
+<img src="https://github.com/juanma0511/Kknd_Root_Detector/blob/main/art/preview.jpg" width="350">
 
 ------------------------------------------------------------------------
 
@@ -116,7 +116,7 @@ https://github.com/reveny/Android-Native-Root-Detector
 If you find a bug:
 
 -   Open an issue:\
-    https://github.com/juanma0511/Android_Root_Detector/issues
+    https://github.com/juanma0511/Kknd_Root_Detector/issues
 
 -   Or contact via Telegram:\
     https://t.me/juanma0511
