@@ -238,9 +238,9 @@ fun HwHeroCard(
 @Composable
 fun HwSummaryRow(result: HwScanResult) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        SummaryChip("${result.failCount} Failed", MaterialTheme.colorScheme.error, Modifier.weight(1f))
-        SummaryChip("${result.warnCount} Warn", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
-        SummaryChip("${result.passCount} Pass", Color(0xFF2E7D32), Modifier.weight(1f))
+        SummaryChip("${result.failCount} Failed", MaterialTheme.colorScheme.error, selected = false, modifier = Modifier.weight(1f), onClick = {})
+        SummaryChip("${result.warnCount} Warn", MaterialTheme.colorScheme.tertiary, selected = false, modifier = Modifier.weight(1f), onClick = {})
+        SummaryChip("${result.passCount} Pass", Color(0xFF2E7D32), selected = false, modifier = Modifier.weight(1f), onClick = {})
     }
 }
 

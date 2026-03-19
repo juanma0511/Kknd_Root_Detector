@@ -3,6 +3,7 @@ package com.juanma0511.rootdetector.ui
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,6 +14,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,6 +35,7 @@ fun RootDetectorScreen(viewModel: MainViewModel) {
     val scanState by viewModel.scanState.collectAsState()
     val scanProgress by viewModel.scanProgress.collectAsState()
     val scanResult by viewModel.scanResult.collectAsState()
+    var selectedSeverity by rememberSaveable { mutableStateOf<Severity?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -49,11 +52,22 @@ fun RootDetectorScreen(viewModel: MainViewModel) {
         }
 
         if (scanState == ScanState.DONE && scanResult != null) {
-            item { SummaryRow(scanResult!!) }
+            item {
+                SummaryRow(
+                    result = scanResult!!,
+                    selectedSeverity = selectedSeverity,
+                    onSeverityClick = { severity ->
+                        selectedSeverity = if (selectedSeverity == severity) null else severity
+                    }
+                )
+            }
         }
 
         if (scanState == ScanState.DONE && scanResult != null) {
-            val grouped = scanResult!!.items.sortedWith(
+            val filteredItems = scanResult!!.items.filter { item ->
+                selectedSeverity == null || item.severity == selectedSeverity
+            }
+            val grouped = filteredItems.sortedWith(
                 compareByDescending<DetectionItem> { it.detected }
                     .thenBy { it.severity.ordinal }
             )
@@ -216,23 +230,73 @@ fun StatusHeroCard(
 }
 
 @Composable
-fun SummaryRow(result: ScanResult) {
+fun SummaryRow(
+    result: ScanResult,
+    selectedSeverity: Severity?,
+    onSeverityClick: (Severity) -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        SummaryChip("${result.highRiskCount} High", MaterialTheme.colorScheme.error, Modifier.weight(1f))
-        SummaryChip("${result.mediumRiskCount} Medium", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
-        SummaryChip("${result.lowRiskCount} Low", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+        SummaryChip(
+            label = "${result.highRiskCount} High",
+            color = MaterialTheme.colorScheme.error,
+            selected = selectedSeverity == Severity.HIGH,
+            modifier = Modifier.weight(1f),
+            onClick = { onSeverityClick(Severity.HIGH) }
+        )
+        SummaryChip(
+            label = "${result.mediumRiskCount} Medium",
+            color = MaterialTheme.colorScheme.tertiary,
+            selected = selectedSeverity == Severity.MEDIUM,
+            modifier = Modifier.weight(1f),
+            onClick = { onSeverityClick(Severity.MEDIUM) }
+        )
+        SummaryChip(
+            label = "${result.lowRiskCount} Low",
+            color = MaterialTheme.colorScheme.primary,
+            selected = selectedSeverity == Severity.LOW,
+            modifier = Modifier.weight(1f),
+            onClick = { onSeverityClick(Severity.LOW) }
+        )
     }
 }
 
 @Composable
-fun SummaryChip(label: String, color: Color, modifier: Modifier = Modifier) {
+fun SummaryChip(
+    label: String,
+    color: Color,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    Surface(modifier = modifier, shape = RoundedCornerShape(12.dp), color = color.copy(alpha = if (isDark) 0.2f else 0.12f)) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 10.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = color)
+    val containerAlpha = when {
+        selected && isDark -> 0.32f
+        selected -> 0.2f
+        isDark -> 0.2f
+        else -> 0.12f
+    }
+    val borderColor = if (selected) color.copy(alpha = if (isDark) 0.85f else 0.55f) else Color.Transparent
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = color.copy(alpha = containerAlpha),
+        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .clickable(onClick = onClick)
+                .padding(vertical = 10.dp)
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = color
+            )
         }
     }
 }
