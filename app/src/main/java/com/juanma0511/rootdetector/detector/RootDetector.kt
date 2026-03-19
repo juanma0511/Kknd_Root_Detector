@@ -77,6 +77,14 @@ class RootDetector(private val context: Context) {
         "io.github.muntashirakon.AppManager.debug" to "App Manager Debug"
     )
 
+    private val oplusExPrefixes = listOf(
+        "com.oplus.ex",
+        "com.coloros.ex",
+        "com.heytap.ex",
+        "com.oneplus.ex",
+        "com.realme.ex"
+    )
+
     private val magiskPaths = listOf(
         "/sbin/.magisk", "/sbin/.core/mirror", "/sbin/.core/img",
         "/data/adb/magisk", "/data/adb/magisk.img", "/data/adb/magisk.db",
@@ -175,10 +183,11 @@ class RootDetector(private val context: Context) {
                 pm.getLaunchIntentForPackage(pkg) != null -> found += "$pkg (launchable)"
             }
         }
+        val filteredFound = found.filterNot(::isOplusExPackage)
         return listOf(det(
             "root_apps", "Root Manager Apps", DetectionCategory.ROOT_APPS, Severity.HIGH,
             "Magisk, KernelSU, APatch, SuperSU, LSPosed and 50+ known packages",
-            found.isNotEmpty(), found.joinToString("\n").ifEmpty { null }
+            filteredFound.isNotEmpty(), filteredFound.joinToString("\n").ifEmpty { null }
         ))
     }
 
@@ -191,10 +200,11 @@ class RootDetector(private val context: Context) {
                 pm.getLaunchIntentForPackage(pkg) != null -> found += "$pkg (launchable)"
             }
         }
+        val filteredFound = found.filterNot(::isOplusExPackage)
         return listOf(det(
             "patched_apps", "Patched / Modified Apps", DetectionCategory.ROOT_APPS, Severity.MEDIUM,
             "ReVanced, CorePatch, Play Integrity Fix, TrickyStore, HMA, LSPosed and companion tools",
-            found.isNotEmpty(), found.joinToString("\n").ifEmpty { null }
+            filteredFound.isNotEmpty(), filteredFound.joinToString("\n").ifEmpty { null }
         ))
     }
 
@@ -207,9 +217,18 @@ class RootDetector(private val context: Context) {
                 pm.getLaunchIntentForPackage(pkg) != null -> found += "$label ($pkg launchable)"
             }
         }
+        try {
+            @Suppress("DEPRECATION")
+            val installedPackages = pm.getInstalledPackages(PackageManager.GET_META_DATA or PackageManager.MATCH_UNINSTALLED_PACKAGES)
+            installedPackages
+                .map { it.packageName }
+                .filter(::isOplusExPackage)
+                .sorted()
+                .forEach { found += "OplusEx utility ($it)" }
+        } catch (_: Exception) {}
         return listOf(det(
             "warning_apps", "Non-Rooted Power Apps", DetectionCategory.ROOT_APPS, Severity.LOW,
-            "Shizuku, Termux, MT Manager, LADB and similar tools are not root by themselves, but they are useful for debugging, shell access and package editing",
+            "Shizuku, Termux, MT Manager, LADB, OplusEx utilities and similar tools are not root by themselves, but they are useful for debugging, shell access and vendor maintenance",
             found.isNotEmpty(), found.joinToString("\n").ifEmpty { null }
         ))
     }
@@ -224,25 +243,7 @@ class RootDetector(private val context: Context) {
     }
 
     private fun checkDangerousProps(): List<DetectionItem> {
-        val checks = mapOf(
-            "ro.debuggable" to setOf("1"),
-            "ro.secure" to setOf("0"),
-            "ro.build.type" to setOf("userdebug", "eng"),
-            "service.adb.root" to setOf("1"),
-            "ro.allow.mock.location" to setOf("1"),
-            "persist.sys.root_access" to setOf("1", "3"),
-            "ro.boot.veritymode" to setOf("disabled", "logging"),
-            "ro.boot.flash.locked" to setOf("0"),
-            "ro.boot.vbmeta.device_state" to setOf("unlocked"),
-            "ro.boot.verifiedbootstate" to setOf("orange", "yellow")
-        )
-        val found = mutableListOf<String>()
-        checks.forEach { (key, badValues) ->
-            val value = getProp(key).lowercase()
-            if (value.isNotEmpty() && badValues.any { value == it || value.contains(it) }) {
-                found += "$key=$value"
-            }
-        }
+        val found = GetPropCatalog.collectMatches(::getProp, GetPropCatalog.dangerousRootProps)
         return listOf(det(
             "dangerous_props", "Dangerous System Props", DetectionCategory.SYSTEM_PROPS, Severity.HIGH,
             "Debuggable builds, unlocked verified boot, adb root and persistent root props",
@@ -449,15 +450,7 @@ class RootDetector(private val context: Context) {
 
     private fun checkKernelSU(): List<DetectionItem> {
         val evidence = linkedSetOf<String>()
-        val ksuProps = listOf(
-            "ro.boot.kernelsu.version",
-            "sys.kernelsu.version",
-            "ro.kernelsu.version",
-            "ro.boot.ksu.version",
-            "ro.ksunext.version",
-            "ro.boot.ksunext.version"
-        )
-        ksuProps.forEach { prop ->
+        GetPropCatalog.kernelSuProps.forEach { prop ->
             val value = getProp(prop)
             if (value.isNotEmpty()) {
                 evidence += "prop $prop=$value"
@@ -643,14 +636,21 @@ class RootDetector(private val context: Context) {
                 }
             } catch (_: Exception) {}
         }
+        val filteredAnomalies = anomalies.filterNot { entry ->
+            val packageName = entry.substringBefore(" ").substringAfterLast("-> ")
+            isOplusExPackage(packageName)
+        }
         return listOf(det(
             "pm_anomalies", "Package Manager Check", DetectionCategory.ROOT_APPS, Severity.HIGH,
             "Scans installed packages, launch intents and known manager actions for hidden root apps",
-            anomalies.isNotEmpty(), anomalies.joinToString("\n").ifEmpty { null }
+            filteredAnomalies.isNotEmpty(), filteredAnomalies.joinToString("\n").ifEmpty { null }
         ))
     }
 
     private fun frameworkKeywords(): List<String> = DetectorTrust.frameworkKeywords()
+
+    private fun isOplusExPackage(packageName: String): Boolean =
+        oplusExPrefixes.any { packageName.startsWith(it, ignoreCase = true) }
 
     private fun isPackageInstalled(pm: PackageManager, packageName: String): Boolean {
         val flagSets = listOf(
@@ -918,19 +918,7 @@ class RootDetector(private val context: Context) {
 
         private fun checkSpoofedProps(): List<DetectionItem> {
         val suspicious = linkedSetOf<String>()
-        val props = mapOf(
-            "ro.boot.vbmeta.device_state" to setOf("unlocked"),
-            "ro.boot.verifiedbootstate" to setOf("orange", "yellow"),
-            "ro.boot.flash.locked" to setOf("0"),
-            "ro.boot.veritymode" to setOf("disabled", "logging"),
-            "ro.boot.warranty_bit" to setOf("1")
-        )
-        props.forEach { (key, badValues) ->
-            val value = getProp(key).lowercase()
-            if (value.isNotEmpty() && badValues.any { value == it || value.contains(it) }) {
-                suspicious += "$key=$value"
-            }
-        }
+        suspicious += GetPropCatalog.collectMatches(::getProp, GetPropCatalog.spoofedBootProps)
         return listOf(
             det(
                 "boot_state",
