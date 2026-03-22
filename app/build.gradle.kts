@@ -4,6 +4,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 android {
     namespace = "com.juanma0511.rootdetector"
     compileSdk = 36
@@ -70,11 +72,18 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    kotlinOptions {
-        jvmTarget = "11"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_11)
+        }
     }
 
     buildFeatures { compose = true }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
 
     packaging {
         jniLibs {

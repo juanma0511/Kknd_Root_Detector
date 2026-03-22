@@ -146,8 +146,8 @@ fun HwHeroCard(
                 Icon(
                     imageVector = when {
                         scanState == HwScanState.SCANNING -> Icons.Outlined.Memory
-                        scanResult?.failCount != 0 -> Icons.Filled.LockOpen
-                        scanResult?.warnCount != 0 -> Icons.Filled.Warning
+                        (scanResult?.failCount ?: 0) > 0 -> Icons.Filled.LockOpen
+                        (scanResult?.warnCount ?: 0) > 0 -> Icons.Filled.Warning
                         scanResult != null -> Icons.Filled.Lock
                         else -> Icons.Outlined.Hardware
                     },
@@ -163,8 +163,8 @@ fun HwHeroCard(
                 text = when {
                     scanState == HwScanState.IDLE -> "Hardware Security"
                     scanState == HwScanState.SCANNING -> "Analyzing..."
-                    scanResult?.failCount != 0 -> "${scanResult!!.failCount} Critical Findings"
-                    scanResult?.warnCount != 0 -> "${scanResult!!.warnCount} Warnings"
+                    (scanResult?.failCount ?: 0) > 0 -> "${scanResult!!.failCount} Critical Findings"
+                    (scanResult?.warnCount ?: 0) > 0 -> "${scanResult!!.warnCount} Warnings"
                     scanResult != null -> "All Checks Passed"
                     else -> "Hardware Security"
                 },

@@ -405,6 +405,7 @@ fun DetectionItemCard(item: DetectionItem) {
     }
 }
 
+@Suppress("DEPRECATION")
 private fun categoryIcon(category: DetectionCategory): ImageVector = when (category) {
     DetectionCategory.SU_BINARIES   -> Icons.Outlined.Terminal
     DetectionCategory.ROOT_APPS     -> Icons.Outlined.Apps

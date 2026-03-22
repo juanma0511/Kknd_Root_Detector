@@ -44,6 +44,7 @@ private val DarkColors = darkColorScheme(
     surfaceVariant     = Color(0xFF43474E),
 )
 
+@Suppress("DEPRECATION")
 @Composable
 fun RootDetectorTheme(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
