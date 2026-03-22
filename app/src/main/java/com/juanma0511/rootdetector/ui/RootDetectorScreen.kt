@@ -4,6 +4,8 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,9 +20,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -186,7 +190,7 @@ fun StatusHeroCard(
                 label = "action"
             ) { state ->
                 when (state) {
-                    ScanState.IDLE, ScanState.DONE -> {
+                    ScanState.IDLE -> {
                         Button(
                             onClick = onScanClick,
                             modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -194,14 +198,33 @@ fun StatusHeroCard(
                             colors = ButtonDefaults.buttonColors(containerColor = statusColor)
                         ) {
                             Icon(
-                                imageVector = if (state == ScanState.DONE) Icons.Filled.Refresh
-                                else Icons.Outlined.PlayArrow,
+                                imageVector = Icons.Outlined.PlayArrow,
                                 contentDescription = null,
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                if (state == ScanState.DONE) "Scan Again" else "Start Scan",
+                                "Start Scan",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp
+                            )
+                        }
+                    }
+                    ScanState.DONE -> {
+                        Button(
+                            onClick = onScanClick,
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = statusColor)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Scan Again",
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 16.sp
                             )
@@ -302,9 +325,11 @@ fun SummaryChip(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun DetectionItemCard(item: DetectionItem) {
     var expanded by remember { mutableStateOf(false) }
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val clipboardManager = LocalClipboardManager.current
 
     val severityColor = when (item.severity) {
         Severity.HIGH   -> MaterialTheme.colorScheme.error
@@ -318,13 +343,19 @@ fun DetectionItemCard(item: DetectionItem) {
     val accentSurface = accentColor.copy(alpha = if (isDark) 0.22f else 0.18f)
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {
+                    if (item.detected) expanded = !expanded
+                },
+                onLongClick = {
+                    clipboardManager.setText(AnnotatedString(buildDetectionCopyText(item)))
+                }
+            ),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = accentContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        onClick = {
-            if (item.detected) expanded = !expanded
-        }
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -405,7 +436,6 @@ fun DetectionItemCard(item: DetectionItem) {
     }
 }
 
-@Suppress("DEPRECATION")
 private fun categoryIcon(category: DetectionCategory): ImageVector = when (category) {
     DetectionCategory.SU_BINARIES   -> Icons.Outlined.Terminal
     DetectionCategory.ROOT_APPS     -> Icons.Outlined.Apps
@@ -418,4 +448,18 @@ private fun categoryIcon(category: DetectionCategory): ImageVector = when (categ
     DetectionCategory.FRIDA         -> Icons.Outlined.BugReport
     DetectionCategory.EMULATOR      -> Icons.Outlined.PhoneAndroid
     DetectionCategory.CUSTOM_ROM    -> Icons.Outlined.Smartphone
+}
+
+private fun buildDetectionCopyText(item: DetectionItem): String {
+    val state = if (item.detected) "FOUND" else "PASS"
+    return buildString {
+        append("[${item.severity}] ${item.name}: $state")
+        append('\n')
+        append(item.description)
+        if (!item.detail.isNullOrBlank()) {
+            append('\n')
+            append('\n')
+            append(item.detail)
+        }
+    }
 }
