@@ -53,7 +53,7 @@ You can download the latest APK from the **GitHub Releases page**:
 
 https://github.com/juanma0511/Kknd_Root_Detector/releases
 
-Or build it yourself following the instructions below.
+Or use lastest CI Build in **Actions**.
 
 ---
 
