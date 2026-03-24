@@ -57,6 +57,29 @@ object DetectorTrust {
 
     fun isDirectSystemMount(mountPoint: String): Boolean = mountPoint in directSystemMounts
 
+    fun hasExplicitMountRootMarker(value: String): Boolean {
+        val lower = value.lowercase()
+        if (isOplusMarker(lower)) return false
+        if (rootPaths.any { lower.contains(it) }) return true
+        val exactMarkers = setOf(
+            "magisk", "zygisk", "magiskd", "ksu", "ksud", "kernelsu",
+            "apatch", "shamiko", "trickystore", "tricky_store", "susfs", "resetprop"
+        )
+        if (exactMarkers.any {
+                Regex("""(^|[^a-z0-9_])${Regex.escape(it)}([^a-z0-9_]|$)""").containsMatchIn(lower)
+            }) {
+            return true
+        }
+        return lower.contains("/data/adb") ||
+            lower.contains("/.magisk") ||
+            lower.contains("/dev/magisk") ||
+            lower.contains("/sbin/.magisk") ||
+            lower.contains("upperdir=/data/") ||
+            lower.contains("workdir=/data/") ||
+            lower.contains("upperdir=/debug_ramdisk") ||
+            lower.contains("workdir=/debug_ramdisk")
+    }
+
     fun isLikelyStockVendorMount(signature: String, mountPoint: String): Boolean {
         if (!isDirectSystemMount(mountPoint)) return false
         val lower = ("$mountPoint $signature").lowercase()
@@ -69,10 +92,18 @@ object DetectorTrust {
         val lower = ("$mountPoint $signature").lowercase()
         if (isOplusMarker(lower)) return false
         if (trustedLocked && isLikelyStockVendorMount(signature, mountPoint)) return false
-        val keywordHit = rootPaths.any { lower.contains(it) } || rootKeywords.any { lower.contains(it) }
+        val keywordHit = hasExplicitMountRootMarker(lower)
         if (keywordHit) return true
         val systemPartition = isDirectSystemMount(mountPoint)
-        val mountAbuse = (lower.contains("overlay") || lower.contains("tmpfs") || lower.contains("loop")) && systemPartition
+        val mountAbuse = systemPartition &&
+            (lower.contains("overlay") || lower.contains("tmpfs") || lower.contains("loop")) &&
+            (
+                lower.contains("upperdir=/data/") ||
+                    lower.contains("workdir=/data/") ||
+                    lower.contains("/debug_ramdisk") ||
+                    lower.contains("/data/adb") ||
+                    lower.contains("/.magisk")
+                )
         return mountAbuse && !trustedLocked
     }
 

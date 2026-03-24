@@ -83,6 +83,22 @@ static bool contains_ci(const std::string& h, const char* n) {
     return lh.find(ln) != std::string::npos;
 }
 
+static bool contains_token_ci(const std::string& haystack, const char* needle) {
+    if (!needle || !*needle) return false;
+    std::string lh = haystack, ln = needle;
+    for (auto& c : lh) c = (char)tolower(c);
+    for (auto& c : ln) c = (char)tolower(c);
+    size_t pos = lh.find(ln);
+    while (pos != std::string::npos) {
+        bool left_ok = pos == 0 || !(isalnum((unsigned char)lh[pos - 1]) || lh[pos - 1] == '_');
+        size_t end = pos + ln.size();
+        bool right_ok = end >= lh.size() || !(isalnum((unsigned char)lh[end]) || lh[end] == '_');
+        if (left_ok && right_ok) return true;
+        pos = lh.find(ln, pos + 1);
+    }
+    return false;
+}
+
 static std::vector<std::string> read_nul_file(const char* path) {
     std::vector<std::string> entries;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -507,6 +523,7 @@ static void detectMountAnomalies() {
     std::string line;
     bool has_magisk_tmpfs = false, has_debug_ramdisk = false;
     bool has_magisk_mirror = false, has_overlay_system = false;
+    bool has_tmpfs_data = false;
     int bind_system_count = 0;
     while (std::getline(mounts, line)) {
         std::istringstream iss(line);
@@ -516,18 +533,23 @@ static void detectMountAnomalies() {
         if (mp == "/debug_ramdisk") has_debug_ramdisk = true;
         if (mp.find("/.magisk") != std::string::npos) has_magisk_mirror = true;
         if (fs == "overlay" &&
-            (mp == "/system" || mp == "/vendor" || mp == "/product" || mp == "/system_root"))
+            (mp == "/system" || mp == "/vendor" || mp == "/product" || mp == "/system_root") &&
+            (contains_ci(line, "/data/adb") || contains_ci(line, ".magisk") ||
+             contains_ci(line, "magisk") || contains_token_ci(line, "ksu") ||
+             contains_ci(line, "kernelsu") || contains_ci(line, "apatch")))
             has_overlay_system = true;
         if (dev.find("/system") != std::string::npos && mp.find("/system") != std::string::npos &&
             dev != mp) bind_system_count++;
-        if (fs == "tmpfs" && mp.find("/data/adb") != std::string::npos)
+        if (fs == "tmpfs" && mp.find("/data/adb") != std::string::npos) {
+            has_tmpfs_data = true;
             add("mount_tmpfs_data", "Suspicious tmpfs on /data/adb",
                 "tmpfs on " + mp + " — Magisk/KSU using tmpfs to hide files");
+        }
     }
     if (has_magisk_tmpfs)
         add("magisk_tmpfs", "Magisk tmpfs /sbin", "tmpfs on /sbin — old Magisk signature");
-    if (has_debug_ramdisk)
-        add("magisk_debug_rd", "Magisk /debug_ramdisk", "/debug_ramdisk present — Android 11+ Magisk");
+    if (has_debug_ramdisk && (has_magisk_tmpfs || has_magisk_mirror || has_overlay_system || has_tmpfs_data))
+        add("magisk_debug_rd", "Magisk /debug_ramdisk", "/debug_ramdisk present with companion root staging traces");
     if (has_magisk_mirror)
         add("magisk_mirror", "Magisk Mirror Mount", "/.magisk path in /proc/mounts");
     if (has_overlay_system)
@@ -791,19 +813,51 @@ static void detectHiddenProcessGroups() {
     }
 
     int fd_count = 0;
+    int suspicious_fd_count = 0;
+    std::vector<std::string> suspicious_targets;
     DIR* fd_d = opendir("/proc/self/fd");
     if (fd_d) {
         struct dirent* e;
         while ((e = readdir(fd_d)) != nullptr) {
             char* end; strtol(e->d_name, &end, 10);
-            if (!*end) fd_count++;
+            if (*end) continue;
+            fd_count++;
+            char path[64]{};
+            char target[PATH_MAX]{};
+            snprintf(path, sizeof(path), "/proc/self/fd/%s", e->d_name);
+            ssize_t len = readlink(path, target, sizeof(target) - 1);
+            if (len <= 0) continue;
+            target[len] = '\0';
+            std::string lower = target;
+            for (auto& c : lower) c = (char)tolower(c);
+            bool suspicious = contains_ci(lower, "/data/adb") ||
+                contains_ci(lower, "/.magisk") ||
+                contains_ci(lower, "/debug_ramdisk") ||
+                contains_ci(lower, "magisk") ||
+                contains_ci(lower, "zygisk") ||
+                contains_ci(lower, "lsposed") ||
+                contains_ci(lower, "riru") ||
+                contains_ci(lower, "kernelsu") ||
+                contains_token_ci(lower, "ksu") ||
+                contains_ci(lower, "apatch");
+            if (suspicious) {
+                suspicious_fd_count++;
+                if (suspicious_targets.size() < 3) suspicious_targets.emplace_back(target);
+            }
         }
         closedir(fd_d);
     }
 
-    if (fd_count > 200) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "Unusually high fd count: %d (>200)", fd_count);
+    if ((fd_count > 384 && suspicious_fd_count >= 2) || (fd_count > 512 && suspicious_fd_count >= 1)) {
+        char buf[256];
+        std::string detail = "Unusually high suspicious fd count: " + std::to_string(fd_count) +
+            " with " + std::to_string(suspicious_fd_count) + " root-related targets";
+        if (!suspicious_targets.empty()) {
+            detail += " (" + suspicious_targets[0];
+            for (size_t i = 1; i < suspicious_targets.size(); i++) detail += ", " + suspicious_targets[i];
+            detail += ")";
+        }
+        snprintf(buf, sizeof(buf), "%s", detail.c_str());
         add("hidden_proc_fds", "High File Descriptor Count", buf);
     }
 
@@ -1063,6 +1117,7 @@ static void detectMagicMount() {
     if (!mounts) return;
     std::string line;
     int magic_count = 0;
+    std::vector<std::string> suspicious_mounts;
     const char* legit[] = {
         "/system/etc/fonts", "/system/fonts", "/system/media",
         "/vendor/overlay", "/product/overlay", "/system/overlay", "/odm/overlay",
@@ -1075,17 +1130,35 @@ static void detectMagicMount() {
         if (fs != "tmpfs" && fs != "overlay" && fs != "ext4" && fs != "f2fs") continue;
         if (mp.find("/system/") != 0 && mp.find("/vendor/") != 0 &&
             mp.find("/product/") != 0 && mp.find("/odm/") != 0) continue;
-        if (dev.find("/dev/block/") != std::string::npos ||
-            dev.find("dm-") != std::string::npos) continue;
         bool skip = false;
         for (int i = 0; legit[i]; i++)
             if (mp.find(legit[i]) == 0) { skip = true; break; }
         if (skip) continue;
+        bool root_marker = contains_ci(line, "/data/adb") ||
+            contains_ci(line, "/.magisk") ||
+            contains_ci(line, "magisk") ||
+            contains_ci(line, "zygisk") ||
+            contains_ci(line, "kernelsu") ||
+            contains_token_ci(line, "ksu") ||
+            contains_ci(line, "apatch") ||
+            contains_ci(line, "debug_ramdisk");
+        bool overlay_with_data = fs == "overlay" &&
+            (contains_ci(line, "upperdir=/data/") || contains_ci(line, "workdir=/data/"));
+        bool suspicious_tmpfs = fs == "tmpfs" && (contains_ci(line, "/data/adb") || contains_ci(line, "debug_ramdisk"));
+        if (!(root_marker || overlay_with_data || suspicious_tmpfs)) continue;
+        if (dev.find("/dev/block/") != std::string::npos && !overlay_with_data && !root_marker) continue;
         magic_count++;
+        if (suspicious_mounts.size() < 3) suspicious_mounts.push_back(mp);
     }
-    if (magic_count > 1) {
-        char buf[80];
-        snprintf(buf, sizeof(buf), "%d magic-mounted paths in system partitions", magic_count);
+    if (magic_count > 0) {
+        char buf[160];
+        std::string detail = std::to_string(magic_count) + " root-like mount path(s) in system partitions";
+        if (!suspicious_mounts.empty()) {
+            detail += " (" + suspicious_mounts[0];
+            for (size_t i = 1; i < suspicious_mounts.size(); i++) detail += ", " + suspicious_mounts[i];
+            detail += ")";
+        }
+        snprintf(buf, sizeof(buf), "%s", detail.c_str());
         add("magic_mount", "Magisk Magic Mount Detected", buf);
     }
 }

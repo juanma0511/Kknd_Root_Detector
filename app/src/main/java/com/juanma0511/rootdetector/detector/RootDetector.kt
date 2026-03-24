@@ -425,8 +425,11 @@ class RootDetector(private val context: Context) {
 
     private fun checkMagiskTmpfs(): List<DetectionItem> {
         val evidence = linkedSetOf<String>()
-        if (File("/dev/magisk").exists()) evidence += "/dev/magisk exists"
-        if (File("/sbin/.magisk").exists()) evidence += "/sbin/.magisk exists"
+        val hasMagiskDevice = File("/dev/magisk").exists()
+        val hasMagiskMirror = File("/sbin/.magisk").exists()
+        if (hasMagiskDevice) evidence += "/dev/magisk exists"
+        if (hasMagiskMirror) evidence += "/sbin/.magisk exists"
+        var sawDebugRamdisk = false
         try {
             File("/proc/mounts").forEachLine { line ->
                 val parts = line.split(" ")
@@ -435,14 +438,19 @@ class RootDetector(private val context: Context) {
                 val mountPoint = parts[1]
                 val fileSystem = parts[2]
                 if (fileSystem == "tmpfs" && mountPoint == "/sbin") evidence += "tmpfs on /sbin"
-                if (mountPoint == "/debug_ramdisk") evidence += "/debug_ramdisk present"
-                if (line.contains(".magisk") || line.contains("/data/adb") || line.contains("overlay")) {
-                    if (mountPoint.startsWith("/system") || mountPoint.startsWith("/vendor") || mountPoint.startsWith("/product") || mountPoint.startsWith("/odm") || mountPoint == "/debug_ramdisk") {
+                if (mountPoint == "/debug_ramdisk") {
+                    sawDebugRamdisk = true
+                }
+                if (DetectorTrust.hasExplicitMountRootMarker(line) || (line.contains("overlay") && line.contains("/data/adb"))) {
+                    if (mountPoint.startsWith("/system") || mountPoint.startsWith("/vendor") || mountPoint.startsWith("/product") || mountPoint.startsWith("/odm")) {
                         evidence += "$mountPoint [$device $fileSystem]"
                     }
                 }
             }
         } catch (_: Exception) {}
+        if (sawDebugRamdisk && (hasMagiskDevice || hasMagiskMirror || evidence.any { it.contains("/data/adb") || it.contains(".magisk") })) {
+            evidence += "/debug_ramdisk present with root staging traces"
+        }
         val (regularEvidence, _) = splitOplusMatches(evidence)
         return listOf(det(
             "magisk_tmpfs", "Magisk tmpfs / debug_ramdisk", DetectionCategory.MAGISK, Severity.HIGH,
