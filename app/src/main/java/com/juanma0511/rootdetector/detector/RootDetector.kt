@@ -91,7 +91,8 @@ class RootDetector(private val context: Context) {
             ::checkSuspiciousMountSources,
             ::checkMountInfoConsistency,
             ::checkBinderServices,
-    
+            ::checkProcessEnvironment,
+            ::checkInitRcRootTraces,
             ::checkMemfdArtifacts,
             ::checkPropertyConsistency,
             ::checkHideBypassModules,
@@ -1106,7 +1107,7 @@ class RootDetector(private val context: Context) {
         )
     }
 
-        private fun checkProcessEnvironment(): List<DetectionItem> {
+    private fun checkProcessEnvironment(): List<DetectionItem> {
         val suspicious = linkedSetOf<String>()
         try {
             System.getenv().forEach { (key, value) ->
@@ -1125,6 +1126,62 @@ class RootDetector(private val context: Context) {
                 "Environment variables leaking root frameworks, adb staging paths or hidden overlays",
                 suspicious.isNotEmpty(),
                 suspicious.joinToString("\n").ifEmpty { null }
+            )
+        )
+    }
+
+    private fun checkInitRcRootTraces(): List<DetectionItem> {
+        val suspicious = linkedSetOf<String>()
+        val markers = setOf(
+            "magisk", "zygisk", "lsposed", "riru", "kernelsu",
+            "ksud", "apatch", "shamiko", "trickystore", "susfs"
+        )
+
+        fun containsToken(text: String, token: String): Boolean {
+            return Regex("""(^|[^a-z0-9_])${Regex.escape(token)}([^a-z0-9_]|$)""").containsMatchIn(text)
+        }
+
+        val initTargets = listOf(
+            File("/system/etc/init"),
+            File("/system_ext/etc/init"),
+            File("/vendor/etc/init"),
+            File("/product/etc/init"),
+            File("/odm/etc/init"),
+            File("/init")
+        )
+
+        initTargets.forEach { target ->
+            try {
+                val files = if (target.isDirectory) {
+                    target.listFiles()?.filter { it.isFile && it.extension == "rc" }.orEmpty()
+                } else if (target.isFile && target.extension == "rc") {
+                    listOf(target)
+                } else {
+                    emptyList()
+                }
+                files.forEach { file ->
+                    if (!file.canRead()) return@forEach
+                    file.useLines { lines ->
+                        lines.forEach { line ->
+                            val lower = line.trim().lowercase()
+                            if (markers.any { containsToken(lower, it) }) {
+                                suspicious += "${file.path}: ${line.trim().take(120)}"
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        return listOf(
+            det(
+                "init_rc_root",
+                "Init RC Root Traces",
+                DetectionCategory.MAGISK,
+                Severity.HIGH,
+                "Scans readable init rc files for root framework services, imports and daemon traces",
+                suspicious.isNotEmpty(),
+                suspicious.take(8).joinToString("\n").ifEmpty { null }
             )
         )
     }
