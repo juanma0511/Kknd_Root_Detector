@@ -104,8 +104,10 @@ class RootDetector(private val context: Context) {
             ::checkBinderServices,
             ::checkProcessEnvironment,
             ::checkInitRcRootTraces,
+            ::checkRootSepolicyTraces,
             ::checkMemfdArtifacts,
             ::checkPropertyConsistency,
+            ::checkBuildFieldCoherence,
             ::checkHideBypassModules,
             ::checkHiddenMagiskModules,
             ::checkHardcodedFrameworkSweep,
@@ -759,6 +761,92 @@ class RootDetector(private val context: Context) {
         return Date(seconds * 1000L)
     }
 
+    private data class FingerprintParts(
+        val brand: String,
+        val product: String,
+        val device: String,
+        val release: String,
+        val buildId: String,
+        val incremental: String,
+        val buildType: String,
+        val tags: String
+    )
+
+    private fun parseFingerprint(value: String): FingerprintParts? {
+        val trimmed = value.trim()
+        val sections = trimmed.split(':', limit = 3)
+        if (trimmed.isEmpty() || sections.size != 3) return null
+        val prefixParts = sections[0].split('/')
+        val buildParts = sections[1].split('/')
+        val typeParts = sections[2].split('/', limit = 2)
+        if (prefixParts.size < 3 || buildParts.size < 3 || typeParts.isEmpty()) return null
+        return FingerprintParts(
+            brand = prefixParts[0],
+            product = prefixParts[1],
+            device = prefixParts[2],
+            release = buildParts[0],
+            buildId = buildParts[1],
+            incremental = buildParts[2],
+            buildType = typeParts[0],
+            tags = typeParts.getOrNull(1).orEmpty()
+        )
+    }
+
+    private fun compatibleIncremental(left: String, right: String): Boolean {
+        if (left == right) return true
+        if (left.startsWith(right) || right.startsWith(left)) return true
+        val normalizedLeft = left.substringBefore('_')
+        val normalizedRight = right.substringBefore('_')
+        if (normalizedLeft.isNotBlank() && normalizedLeft == normalizedRight) return true
+        val tokenizedLeft = left.replace(Regex("[^A-Za-z0-9]+"), " ").trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        val tokenizedRight = right.replace(Regex("[^A-Za-z0-9]+"), " ").trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        return tokenizedLeft.isNotEmpty() && tokenizedRight.isNotEmpty() && tokenizedLeft.any { token ->
+            token.length >= 6 && tokenizedRight.any { other -> token == other || token.startsWith(other) || other.startsWith(token) }
+        }
+    }
+
+    private fun runtimeFingerprintMatches(candidate: String, reference: String): Boolean {
+        if (candidate == reference) return true
+        val parsedCandidate = parseFingerprint(candidate) ?: return false
+        val parsedReference = parseFingerprint(reference) ?: return false
+        return parsedCandidate.brand == parsedReference.brand &&
+            parsedCandidate.release == parsedReference.release &&
+            parsedCandidate.buildId == parsedReference.buildId &&
+            parsedCandidate.buildType == parsedReference.buildType &&
+            parsedCandidate.tags == parsedReference.tags &&
+            compatibleIncremental(parsedCandidate.incremental, parsedReference.incremental)
+    }
+
+    private fun crossPartitionFingerprintMismatch(
+        buildFingerprint: String,
+        systemFingerprint: String,
+        trustedLocked: Boolean
+    ): String? {
+        if (buildFingerprint.isBlank() || systemFingerprint.isBlank()) return null
+        if (buildFingerprint == systemFingerprint) return null
+        val build = parseFingerprint(buildFingerprint) ?: return if (trustedLocked) null else "ro.build.fingerprint differs from ro.system.build.fingerprint"
+        val system = parseFingerprint(systemFingerprint) ?: return if (trustedLocked) null else "ro.build.fingerprint differs from ro.system.build.fingerprint"
+
+        val hardMismatch = build.brand != system.brand ||
+            build.release != system.release ||
+            build.buildId != system.buildId ||
+            build.buildType != system.buildType ||
+            build.tags != system.tags
+        if (hardMismatch) {
+            return "ro.build and ro.system fingerprints disagree on core build fields"
+        }
+
+        if (!compatibleIncremental(build.incremental, system.incremental)) {
+            return "ro.build and ro.system fingerprints disagree on build incremental"
+        }
+
+        if (!trustedLocked && build.product != system.product && build.device != system.device) {
+            return "ro.build and ro.system fingerprints disagree on product/device"
+        }
+
+        return null
+    }
+
     private fun parsePatchDate(value: String): Date? {
         val trimmed = value.trim()
         if (!Regex("""\d{4}-\d{2}-\d{2}""").matches(trimmed)) return null
@@ -1209,6 +1297,47 @@ class RootDetector(private val context: Context) {
         )
     }
 
+    private fun checkRootSepolicyTraces(): List<DetectionItem> {
+        val suspicious = linkedSetOf<String>()
+        val markers = setOf(
+            "magisk", "zygisk", "lsposed", "riru", "kernelsu",
+            "ksud", "apatch", "shamiko", "trickystore", "susfs", "resetprop"
+        )
+        val sepolicyTargets = listOf(
+            "/vendor/etc/selinux/vendor_sepolicy.cil",
+            "/system_ext/etc/selinux/system_ext_sepolicy.cil",
+            "/product/etc/selinux/product_sepolicy.cil",
+            "/odm/etc/selinux/odm_sepolicy.cil",
+            "/system/etc/selinux/plat_sepolicy.cil"
+        )
+
+        fun containsToken(text: String, token: String): Boolean {
+            return Regex("""(^|[^a-z0-9_])${Regex.escape(token)}([^a-z0-9_]|$)""").containsMatchIn(text)
+        }
+
+        sepolicyTargets.forEach { path ->
+            val file = File(path)
+            if (!file.exists() || !file.canRead()) return@forEach
+            val content = runCatching { file.readText().lowercase() }.getOrDefault("")
+            val hits = markers.filter { containsToken(content, it) }
+            if (hits.isNotEmpty()) {
+                suspicious += "$path -> ${hits.distinct().joinToString(",")}"
+            }
+        }
+
+        return listOf(
+            det(
+                "root_sepolicy",
+                "Root Sepolicy Traces",
+                DetectionCategory.MAGISK,
+                Severity.HIGH,
+                "Scans readable sepolicy cil files for Magisk, LSPosed, KernelSU, APatch and hide-bypass traces",
+                suspicious.isNotEmpty(),
+                suspicious.take(6).joinToString("\n").ifEmpty { null }
+            )
+        )
+    }
+
         private fun checkHiddenMagiskModules(): List<DetectionItem> {
         val detected = linkedSetOf<String>()
         val keywords = hiddenModuleKeywords
@@ -1370,6 +1499,43 @@ class RootDetector(private val context: Context) {
                 DetectionCategory.SYSTEM_PROPS,
                 Severity.HIGH,
                 "Flags inconsistent verified boot, build and security props often produced by resetprop spoofing",
+                suspicious.isNotEmpty(),
+                suspicious.joinToString("\n").ifEmpty { null }
+            )
+        )
+    }
+
+    private fun checkBuildFieldCoherence(): List<DetectionItem> {
+        val suspicious = linkedSetOf<String>()
+        val trustedLocked = bootLooksLockedAndNormal()
+        val propFingerprint = getProp("ro.build.fingerprint")
+        val propTags = getProp("ro.build.tags")
+        val propType = getProp("ro.build.type")
+        val systemFingerprint = getProp("ro.system.build.fingerprint")
+        val runtimeFingerprint = Build.FINGERPRINT
+
+        if (runtimeFingerprint.isNotBlank() && propFingerprint.isNotBlank()) {
+            val runtimeMatchesBuild = runtimeFingerprintMatches(runtimeFingerprint, propFingerprint)
+            val runtimeMatchesSystem = systemFingerprint.isNotBlank() && runtimeFingerprintMatches(runtimeFingerprint, systemFingerprint)
+            if (!runtimeMatchesBuild && !runtimeMatchesSystem) {
+                suspicious += "Build.FINGERPRINT differs from live system fingerprints"
+            }
+        }
+        if ((Build.TAGS ?: "").isNotBlank() && propTags.isNotBlank() && Build.TAGS != propTags) {
+            suspicious += "Build.TAGS differs from ro.build.tags"
+        }
+        if ((Build.TYPE ?: "").isNotBlank() && propType.isNotBlank() && Build.TYPE != propType) {
+            suspicious += "Build.TYPE differs from ro.build.type"
+        }
+        crossPartitionFingerprintMismatch(propFingerprint, systemFingerprint, trustedLocked)?.let { suspicious += it }
+
+        return listOf(
+            det(
+                "build_field_coherence",
+                "Build Field Coherence",
+                DetectionCategory.SYSTEM_PROPS,
+                Severity.HIGH,
+                "Checks whether runtime Build fields still match the live system props exposed by getprop",
                 suspicious.isNotEmpty(),
                 suspicious.joinToString("\n").ifEmpty { null }
             )
@@ -1650,6 +1816,20 @@ class RootDetector(private val context: Context) {
             "matrixx",
             "nameless",
             "aicp",
+            "ancient",
+            "afterlife",
+            "cherish",
+            "bliss",
+            "spark",
+            "superior",
+            "elixir",
+            "projectelixir",
+            "voltage",
+            "alpha droid",
+            "alphadroid",
+            "project blaze",
+            "blaze",
+            "paranoid",
             "syberia",
             "awaken",
             "pixys",
