@@ -312,6 +312,77 @@ static void detectSulist() {
     }
 }
 
+static void detectRootDaemonCmdline() {
+    const char* suspects[] = {
+        "magiskd", "ksud", "kernelsu", "apd", "zygisk",
+        "lsposed", "lspd", "riru", "shamiko", "trickystore", "tricky_store",
+        nullptr
+    };
+    std::vector<std::string> found;
+    DIR* d = opendir("/proc");
+    if (!d) return;
+    struct dirent* e;
+    int checked = 0;
+    while ((e = readdir(d)) != nullptr && checked < 768) {
+        if (e->d_type != DT_DIR && e->d_type != DT_UNKNOWN) continue;
+        char* end;
+        long pid = strtol(e->d_name, &end, 10);
+        if (*end) continue;
+        checked++;
+        char cmdpath[64];
+        snprintf(cmdpath, sizeof(cmdpath), "/proc/%ld/cmdline", pid);
+        auto entries = read_nul_file(cmdpath);
+        if (entries.empty()) continue;
+        std::string combined;
+        for (size_t i = 0; i < entries.size(); i++) {
+            if (i) combined += " ";
+            combined += entries[i];
+        }
+        for (int i = 0; suspects[i]; i++) {
+            if (contains_token_ci(combined, suspects[i])) {
+                found.push_back(std::string(suspects[i]) + " (pid " + std::to_string(pid) + ")");
+                break;
+            }
+        }
+    }
+    closedir(d);
+    if (!found.empty()) {
+        std::string d2 = "Root daemons in cmdline:";
+        int shown = 0;
+        for (auto& p : found) { if (shown++ >= 4) break; d2 += " [" + p + "]"; }
+        add("root_daemon_cmdline", "Root Daemon Cmdline", d2);
+    }
+}
+
+static void detectRootUnixSockets() {
+    std::ifstream sockets("/proc/net/unix");
+    if (!sockets) return;
+    const char* suspects[] = {
+        "magisk", "zygisk", "ksud", "kernelsu", "apatch",
+        "lsposed", "lspd", "riru", "shamiko", "trickystore", "tricky_store",
+        nullptr
+    };
+    std::vector<std::string> found;
+    std::string line;
+    while (std::getline(sockets, line)) {
+        for (int i = 0; suspects[i]; i++) {
+            if (contains_token_ci(line, suspects[i])) {
+                found.push_back(line);
+                break;
+            }
+        }
+    }
+    if (!found.empty()) {
+        std::string d = "Suspicious unix sockets:";
+        int shown = 0;
+        for (auto& f : found) {
+            if (shown++ >= 3) break;
+            d += " [" + f.substr(f.size() > 120 ? f.size() - 120 : 0) + "]";
+        }
+        add("root_unix_sockets", "Root Framework Unix Sockets", d);
+    }
+}
+
 static void detectSuspiciousFiles() {
     const char* paths[] = {
         "/data/adb/magisk", "/data/adb/magisk.db", "/data/adb/modules",
@@ -1741,6 +1812,8 @@ Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* e
     detectPtrace();
     detectSuBinary();
     detectSulist();
+    detectRootDaemonCmdline();
+    detectRootUnixSockets();
     detectSuspiciousFiles();
     detectSuspiciousPersistProps();
     detectThirdPartyRom();
