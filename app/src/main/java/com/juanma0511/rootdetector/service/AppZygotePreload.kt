@@ -101,9 +101,14 @@ class AppZygotePreload : ZygotePreload {
             checkAccess("u:object_r:rootfs:s0", "u:object_r:tmpfs:s0", "filesystem", "associate") ||
             checkAccess("u:r:kernel:s0", "u:object_r:tmpfs:s0", "fifo_file", "open")) sb.append("found Magisk; ")
 
-        if (contextExists("u:r:ksu:s0") || contextExists("u:object_r:ksu_file:s0") ||
+        val ksuDomain = contextExists("u:r:ksu:s0")
+        val ksuFile = contextExists("u:object_r:ksu_file:s0")
+        if (ksuDomain || ksuFile ||
             checkAccess("u:r:kernel:s0", "u:object_r:adb_data_file:s0", "file", "read") ||
-            checkAccess("u:r:untrusted_app:s0", "u:object_r:ksu_file:s0", "file", "read")) sb.append("found KernelSU; ")
+            checkAccess("u:r:untrusted_app:s0", "u:object_r:ksu_file:s0", "file", "read")) {
+            val bp = (if (ksuDomain) "1" else "0") + (if (ksuFile) "1" else "0")
+            sb.append("found KernelSU (bitpair $bp); ")
+        }
 
         if (contextExists("u:object_r:lsposed_file:s0") ||
             checkAccess("u:r:untrusted_app:s0", "u:object_r:lsposed_file:s0", "file", "read") ||

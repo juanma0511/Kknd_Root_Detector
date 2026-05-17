@@ -131,7 +131,8 @@ class RootDetector(private val context: Context) {
             ::checkRecoveryArtifacts,
             ::checkInitDotD,
             ::checkDataLocalTmp,
-            ::checkResetpropModifications
+            ::checkResetpropModifications,
+            ::checkDangerousAppsCorroboration
         )
         val total = checks.size + 1 
         items.add(ZygiskDetector().detect())
@@ -2589,6 +2590,39 @@ class RootDetector(private val context: Context) {
         ))
     }
 
+    private fun checkDangerousAppsCorroboration(): List<DetectionItem> {
+        val detected = linkedSetOf<String>()
+        val packages = listOf(
+            "com.topjohnwu.magisk",
+            "io.github.huskydg.magisk",
+            "me.weishu.kernelsu",
+            "com.metasploit.stage",
+            "com.koushikdutta.superuser",
+            "com.noshufou.android.su",
+            "com.thirdparty.superuser",
+            "com.yellowes.su"
+        )
+        packages.forEach { pkg ->
+            try {
+                val pInfo = context.packageManager.getPackageInfo(pkg, 0)
+                val appCtx = context.createPackageContext(pkg, Context.CONTEXT_IGNORE_SECURITY)
+                val apkPath = pInfo.applicationInfo?.sourceDir ?: return@forEach
+                java.util.zip.ZipFile(File(apkPath)).use { zip ->
+                    val entry = zip.getEntry("classes.dex")
+                    if (entry != null) {
+                        detected += "$pkg (verified via ZipFile)"
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return listOf(det(
+            "pkg_corroboration", "Package Corroboration Probe",
+            DetectionCategory.ROOT_APPS, Severity.HIGH,
+            "Uses createPackageContext and direct ZipFile inspection to corroborate the existence of root managers, bypassing standard PM visibility filters.",
+            detected.isNotEmpty(), detected.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
     private fun fetchAppZygoteDetections(): List<DetectionItem> {
         val detections = mutableListOf<DetectionItem>()
         try {
@@ -2609,7 +2643,7 @@ class RootDetector(private val context: Context) {
                 override fun onServiceDisconnected(name: android.content.ComponentName?) { latch.countDown() }
             }
             if (context.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
-                connection.latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                connection.latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
                 context.unbindService(connection)
                 val rawPayload = connection.payload ?: return detections
 

@@ -718,7 +718,7 @@ static void detectKernelBuild() {
         "proton","stormbreaker","sleepy","syberia","crDroid","hentai","octavi",
         "purekernel","exynos-hacks","UKM","ZeroVoid","CruelKernel","Waifu",
         "ShadesOfPurple","Kirisakura","Optimus","RedHat","Floral","Vantom",
-        "Los","lineageos","aospk","corvus","pixel-emu","waydroid",nullptr
+        "Los","lineageos","aospk","corvus","pixel-emu","waydroid","Glow",nullptr
     };
     for (int i = 0; custom_kernels[i]; i++) {
         if (contains_ci(rel, custom_kernels[i]) || contains_ci(ver, custom_kernels[i])) {
@@ -2562,10 +2562,9 @@ static void detectSelinuxDirtyPolicy() {
 
     std::vector<std::string> hits;
 
-    // Check for existance of contexts
+    // Check for existence of contexts
     const char* contexts[] = {
         "u:r:magisk:s0", "u:object_r:magisk_file:s0",
-        "u:r:ksu:s0", "u:object_r:ksu_file:s0",
         "u:object_r:lsposed_file:s0",
         "u:object_r:xposed_data:s0", "u:object_r:xposed_file:s0",
         "u:r:adbroot:s0", nullptr
@@ -2574,6 +2573,15 @@ static void detectSelinuxDirtyPolicy() {
         if (selinux_context_exists(contexts[i], check_access)) {
             hits.push_back(std::string("context exists: ") + contexts[i]);
         }
+    }
+
+    bool ksu_domain = selinux_context_exists("u:r:ksu:s0", check_access);
+    bool ksu_file = selinux_context_exists("u:object_r:ksu_file:s0", check_access);
+    if (ksu_domain || ksu_file) {
+        std::string bp = "ksu_bitpair|";
+        bp += ksu_domain ? '1' : '0';
+        bp += ksu_file ? '1' : '0';
+        hits.push_back(bp);
     }
 
     for (int i = 0; rules[i].src; i++) {
