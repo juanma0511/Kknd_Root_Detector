@@ -43,6 +43,7 @@ class RootDetector(private val context: Context) {
     private val emulatorProducts = HardcodedSignals.emuProducts.toSet()
     private val kernelSuPackages = HardcodedSignals.kernelSuPackages
     private val kernelSuPaths = HardcodedSignals.kernelSuPaths
+    private val ksuNextPaths = HardcodedSignals.ksuNextPaths
     private val moduleDirs = HardcodedSignals.moduleDirs
     private val moduleScanFiles = HardcodedSignals.moduleScanFiles
     private val managerActions = HardcodedSignals.managerActions
@@ -62,6 +63,9 @@ class RootDetector(private val context: Context) {
     private val frameworkSweepKeywords = HardcodedSignals.allFrameworkSweepKeywords
 
     fun runAllChecks(progressCallback: (Int) -> Unit = {}): List<DetectionItem> {
+        val items = mutableListOf<DetectionItem>()
+        items.addAll(fetchAppZygoteDetections())
+
         val checks: List<() -> List<DetectionItem>> = listOf(
             ::checkSuBinaries,
             ::checkRootPackages,
@@ -131,7 +135,6 @@ class RootDetector(private val context: Context) {
             ::checkSelinuxAttrCurrentWrite,
             ::checkSelinuxDirtyPolicy
         )
-        val items = mutableListOf<DetectionItem>()
         val total = checks.size + 1 
         items.add(ZygiskDetector().detect())
         items.add(OverlayFsDetector().detect())
@@ -563,12 +566,12 @@ class RootDetector(private val context: Context) {
                 evidence += "package $pkg"
             }
         }
-        kernelSuPaths.forEach { path ->
+        (kernelSuPaths + ksuNextPaths).forEach { path ->
             if (File(path).exists()) {
                 evidence += path
             }
         }
-        evidence += collectNetUnixMatches(listOf("ksu", "kernelsu", "ksunext")).take(4)
+        evidence += collectNetUnixMatches(listOf("ksu", "kernelsu", "ksunext", "apatch")).take(4)
         try {
             val initMaps = File("/proc/1/maps")
             if (initMaps.exists()) {
@@ -2586,6 +2589,41 @@ class RootDetector(private val context: Context) {
             "Apps installed via ADB or sideloading may indicate a developer or testing environment",
             suspicious.isNotEmpty(), suspicious.joinToString("\n").ifEmpty { null }
         ))
+    }
+
+    private fun fetchAppZygoteDetections(): List<DetectionItem> {
+        val detections = mutableListOf<DetectionItem>()
+        try {
+            val intent = Intent().setClassName(context.packageName, "com.juanma0511.rootdetector.service.SelinuxCarrierService")
+            val connection = object : android.content.ServiceConnection {
+                var payload: String? = null
+                val latch = java.util.concurrent.CountDownLatch(1)
+                override fun onServiceConnected(name: android.content.ComponentName?, service: android.os.IBinder?) {
+                    val reply = android.os.Parcel.obtain()
+                    try {
+                        service?.transact(android.os.IBinder.FIRST_CALL_TRANSACTION, android.os.Parcel.obtain(), reply, 0)
+                        payload = reply.readString()
+                    } finally {
+                        reply.recycle()
+                        latch.countDown()
+                    }
+                }
+                override fun onServiceDisconnected(name: android.content.ComponentName?) { latch.countDown() }
+            }
+            if (context.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
+                connection.latch.await(2, java.util.concurrent.TimeUnit.SECONDS)
+                context.unbindService(connection)
+                connection.payload?.split("\n")?.filter { it.contains("|") }?.forEach { entry ->
+                    val parts = entry.split("|", limit = 2)
+                    detections.add(det(
+                        "app_zygote_${parts[0]}", parts[1].substringBefore(":"),
+                        DetectionCategory.SYSTEM_PROPS, Severity.HIGH,
+                        parts[1], true, parts[1]
+                    ))
+                }
+            }
+        } catch (_: Exception) {}
+        return detections
     }
 
 }

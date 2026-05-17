@@ -23,7 +23,7 @@ class NativeChecks {
         fun loadError() = libError
     }
 
-    private external fun runNativeChecks(): Array<String>
+    external fun runNativeChecks(): Array<String>
 
     fun run(): List<DetectionItem> {
         if (!libLoaded) return emptyList()

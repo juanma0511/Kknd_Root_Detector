@@ -24,6 +24,13 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".service.SelinuxCarrierService"
+            android:isolatedProcess="true"
+            android:useAppZygote="true"
+            android:zygotePreloadName=".service.AppZygotePreload"
+            android:exported="false" />
+
     </application>
 
 </manifest>

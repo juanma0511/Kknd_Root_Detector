@@ -63,9 +63,10 @@ static std::string fread_str(const char* p) {
     int fd = open(p, O_RDONLY);
     if (fd < 0) return "";
     char buf[4096]{};
-    read(fd, buf, sizeof(buf) - 1);
+    ssize_t len = read(fd, buf, sizeof(buf) - 1);
     close(fd);
-    return buf;
+    if (len < 0) return "";
+    return std::string(buf, (size_t)len);
 }
 
 static std::string prop_from_file(const char* file, const char* key) {
@@ -106,6 +107,7 @@ static std::vector<std::string> read_nul_file(const char* path) {
     if (fd < 0) return entries;
     char buf[8192]{};
     ssize_t len = read(fd, buf, sizeof(buf) - 1);
+    if (len < 0) { close(fd); return entries; }
     close(fd);
     if (len <= 0) return entries;
     size_t start = 0;
@@ -140,23 +142,37 @@ static pid_t find_pid_by_cmd_fragment(const char* needle) {
 }
 
 static void detectKernelsu() {
-    errno = 0; prctl(0xDEAD, 0, 0, 0, 0);
-    if (errno != EINVAL) {
-        add("ksu_prctl", "KernelSU (prctl 0xDEAD)",
-            "prctl(0xDEAD) errno!=EINVAL — KernelSU kernel hook confirmed");
-        return;
+    const struct { int option; long arg2; const char* name; const char* id; } probes[] = {
+        { 0xDEAD,    0,       "prctl(0xDEAD,0)",       "ksu_prctl" },
+        { 0xDEAD,    0x1314,  "prctl(0xDEAD,0x1314)",  "ksu_prctl_1314" },
+        { 0xBEEF,    0,       "prctl(0xBEEF,0)",       "ksu_prctl_beef" },
+        { 0xCAFE,    0,       "prctl(0xCAFE,0)",       "ksu_prctl_cafe" },
+        { PR_SET_MM, 0xDEAD,   "prctl(PR_SET_MM,0xDEAD)", "ksu_next_prctl" },
+        { PR_SET_MM, 0x114514, "prctl(PR_SET_MM,0x114514)", "ksu_next_prctl2" }
+    };
+    for (auto& p : probes) {
+        errno = 0;
+        prctl(p.option, p.arg2, 0, 0, 0);
+        if (errno != EINVAL && errno != EPERM && errno != ENOSYS) {
+            add(p.id, "KernelSU/Next (prctl)",
+                std::string(p.name) + " errno=" + std::to_string(errno) + " (not EINVAL)");
+            return;
+        }
     }
-    errno = 0; prctl(PR_SET_MM, 0xDEAD, 0, 0, 0);
-    if (errno != EINVAL && errno != EPERM)
-        add("ksu_prctl2", "KernelSU Next (prctl PR_SET_MM)",
-            "prctl(PR_SET_MM,0xDEAD) unexpected errno — KSU Next hook");
 }
 
 static void detectKernelsuKill() {
-    errno = 0; kill(0x1314, 0);
-    if (errno == 0)
-        add("ksu_kill", "KernelSU (kill 0x1314)",
-            "kill(0x1314,0) returned 0 — KernelSU intercepting kill() syscall");
+    const pid_t magic_pids[] = { 0x1314, 0xDEAD, 0xBEEF, 0x114514 };
+    for (auto& pid : magic_pids) {
+        errno = 0;
+        kill(pid, 0);
+        if (errno == 0) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "kill(0x%x, 0) returned 0 — KernelSU Next hook", (unsigned)pid);
+            add("ksu_kill", "KernelSU/Next (kill magic)", buf);
+            return;
+        }
+    }
 }
 
 static void detectKernelsuJbd2() {
@@ -412,17 +428,19 @@ static void detectSulist() {
         strtol(e->d_name, &end, 10);
         if (*end) continue;
         checked++;
-        char commpath[64];
+        char commpath[128];
         snprintf(commpath, sizeof(commpath), "/proc/%s/comm", e->d_name);
         int fd = open(commpath, O_RDONLY | O_NONBLOCK);
         if (fd < 0) continue;
         char comm[32]{};
-        read(fd, comm, sizeof(comm) - 1);
+        ssize_t len = read(fd, comm, sizeof(comm) - 1);
         close(fd);
-        for (int i = 0; suspects[i]; i++) {
-            if (strncmp(comm, suspects[i], strlen(suspects[i])) == 0) {
-                found.push_back(comm);
-                break;
+        if (len > 0) {
+            for (int i = 0; suspects[i]; i++) {
+                if (strncmp(comm, suspects[i], strlen(suspects[i])) == 0) {
+                    found.push_back(comm);
+                    break;
+                }
             }
         }
     }
@@ -1098,7 +1116,6 @@ static void detectMountLoophole() {
 }
 
 static void detectHiddenProcessGroups() {
-    std::ifstream tasks_f("/proc/self/task");
     int proc_count = 0, task_count = 0;
 
     DIR* proc_d = opendir("/proc");
@@ -1111,21 +1128,19 @@ static void detectHiddenProcessGroups() {
         closedir(proc_d);
     }
 
-    char cgroup[256]{};
-    snprintf(cgroup, sizeof(cgroup), "/proc/self/cgroup");
-    std::string cg = fread_str(cgroup);
-
     if (proc_count > 0) {
         int fd = open("/proc/self/status", O_RDONLY);
         if (fd >= 0) {
             char buf[1024]{};
-            read(fd, buf, sizeof(buf) - 1);
+            ssize_t len = read(fd, buf, sizeof(buf) - 1);
             close(fd);
-            std::string status = buf;
-            size_t pos = status.find("Threads:");
-            if (pos != std::string::npos) {
-                int threads = atoi(status.c_str() + pos + 8);
-                task_count = threads;
+            if (len > 0) {
+                std::string status = buf;
+                size_t pos = status.find("Threads:");
+                if (pos != std::string::npos) {
+                    int threads = atoi(status.c_str() + pos + 8);
+                    task_count = threads;
+                }
             }
         }
     }
@@ -2040,18 +2055,14 @@ static void detectSystemProxy() {
 }
 
 static void detectSUSFS() {
-    if (fexists("/sys/module/susfs")) {
-        add("susfs_sysfs", "SUSFS Kernel Module",
-            "/sys/module/susfs exists — SUS filesystem file-hide bypass active");
-    }
     const char* susfs_nodes[] = {
-        "/sys/kernel/susfs", "/proc/susfs", "/dev/susfs",
-        "/sys/fs/susfs", nullptr
+        "/sys/module/susfs", "/sys/kernel/susfs", "/proc/susfs", "/dev/susfs",
+        "/sys/fs/susfs", "/sys/module/ksu_susfs", nullptr
     };
     for (int i = 0; susfs_nodes[i]; i++) {
-        if (fexists(susfs_nodes[i])) {
-            add("susfs_node", "SUSFS Kernel Node",
-                std::string("SUSFS proc/sys node present: ") + susfs_nodes[i]);
+        if (fexists_or_noperm(susfs_nodes[i])) {
+            add("susfs_node", "SUSFS Detected",
+                std::string("SUSFS artifact: ") + susfs_nodes[i]);
             break;
         }
     }
@@ -2059,9 +2070,8 @@ static void detectSUSFS() {
     if (maps) {
         std::string line;
         while (std::getline(maps, line)) {
-            if (line.find("susfs") != std::string::npos ||
-                line.find("[sus_") != std::string::npos ||
-                line.find("ksu_susfs") != std::string::npos) {
+            if (contains_ci(line, "susfs") || contains_ci(line, "[sus_") ||
+                contains_ci(line, "ksu_susfs")) {
                 add("susfs_maps", "SUSFS in Memory Maps",
                     "SUSFS mapping: " + line.substr(0, 80));
                 break;
@@ -2488,9 +2498,14 @@ static void detectSelinuxAttrCurrentWrite() {
 static void detectSelinuxDirtyPolicy() {
     typedef int (*check_access_fn)(const char*, const char*, const char*, const char*, void*);
     check_access_fn check_access = (check_access_fn)dlsym(RTLD_DEFAULT, "selinux_check_access");
+    bool h_opened = false;
+    void* h = nullptr;
     if (!check_access) {
-        void* h = dlopen("libselinux.so", RTLD_NOW | RTLD_NOLOAD);
-        if (!h) h = dlopen("libselinux.so", RTLD_NOW);
+        h = dlopen("libselinux.so", RTLD_NOW | RTLD_NOLOAD);
+        if (!h) {
+            h = dlopen("libselinux.so", RTLD_NOW);
+            if (h) h_opened = true;
+        }
         if (h) check_access = (check_access_fn)dlsym(h, "selinux_check_access");
     }
     if (!check_access) return;
@@ -2499,26 +2514,38 @@ static void detectSelinuxDirtyPolicy() {
         const char* src; const char* tgt;
         const char* cls; const char* perm;
         const char* label;
+        bool user_only;
     } rules[] = {
-        {"u:r:system_server:s0",   "u:r:system_server:s0",       "process",           "execmem",   "system_server execmem"},
-        {"u:r:untrusted_app:s0",   "u:object_r:magisk_file:s0",  "file",              "read",      "untrusted_app -> magisk_file read"},
-        {"u:r:untrusted_app:s0",   "u:object_r:ksu_file:s0",     "file",              "read",      "untrusted_app -> ksu_file read"},
-        {"u:r:untrusted_app:s0",   "u:object_r:lsposed_file:s0", "file",              "read",      "untrusted_app -> lsposed_file read"},
-        {"u:r:untrusted_app:s0",   "u:object_r:xposed_data:s0",  "file",              "read",      "untrusted_app -> xposed_data read"},
-        {"u:r:adbd:s0",            "u:r:adbroot:s0",             "binder",            "call",      "adbd -> adbroot binder"},
-        {"u:r:zygote:s0",          "u:object_r:adb_data_file:s0","dir",               "search",    "zygote -> adb_data_file search"},
-        {"u:r:shell:s0",           "u:r:su:s0",                  "process",           "transition","shell -> su transition"},
-        {nullptr, nullptr, nullptr, nullptr, nullptr}
+        {"u:r:system_server:s0",   "u:r:system_server:s0",       "process",           "execmem",   "system_server execmem", false},
+        {"u:r:untrusted_app:s0",   "u:object_r:magisk_file:s0",  "file",              "read",      "untrusted_app -> magisk_file read", false},
+        {"u:r:untrusted_app:s0",   "u:object_r:ksu_file:s0",     "file",              "read",      "untrusted_app -> ksu_file read", false},
+        {"u:r:untrusted_app:s0",   "u:object_r:lsposed_file:s0", "file",              "read",      "untrusted_app -> lsposed_file read", false},
+        {"u:r:untrusted_app:s0",   "u:object_r:xposed_data:s0",  "file",              "read",      "untrusted_app -> xposed_data read", false},
+        {"u:r:adbd:s0",            "u:r:adbroot:s0",             "binder",            "call",      "adbd -> adbroot binder", false},
+        {"u:r:zygote:s0",          "u:object_r:adb_data_file:s0","dir",               "search",    "zygote -> adb_data_file search", false},
+        {"u:r:shell:s0",           "u:r:su:s0",                  "process",           "transition","shell -> su transition", true},
+        {"u:r:fsck_untrusted:s0",  "u:r:fsck_untrusted:s0",      "capability",        "sys_admin", "fsck_untrusted sys_admin", false},
+        {"u:r:msd_app:s0",         "u:r:msd_daemon:s0",          "unix_stream_socket","connectto", "msd_app -> msd_daemon connect", false},
+        {"u:r:msd_daemon:s0",      "u:r:msd_daemon:s0",          "unix_stream_socket","connectto", "msd_daemon self connect", false},
+        {"u:r:msd_daemon:s0",      "u:object_r:selinuxfs:s0",    "file",              "read",      "msd_daemon -> selinuxfs read", false},
+        {"u:r:msd_daemon:s0",      "u:object_r:configfs:s0",     "dir",               "search",    "msd_daemon -> configfs dir search", false},
+        {"u:r:msd_daemon:s0",      "u:object_r:configfs:s0",     "file",              "write",     "msd_daemon -> configfs file write", false},
+        {nullptr, nullptr, nullptr, nullptr, nullptr, false}
     };
 
     auto query = [&](const char* src, const char* tgt, const char* cls, const char* perm) -> int {
         errno = 0;
-        return check_access(src, tgt, cls, perm, nullptr);
+        int r = check_access(src, tgt, cls, perm, nullptr);
+        if (r != 0 && (errno == EACCES || errno == EPERM)) return 1;
+        return r;
     };
 
     int neg1 = query("u:r:untrusted_app:s0", "u:r:init:s0", "binder", "call");
     int neg2 = query("u:r:untrusted_app:s0", "u:r:init:s0", "binder", "call");
-    if (neg1 == 0 || neg2 == 0) return;
+    if (neg1 == 0 || neg2 == 0) {
+        if (h_opened && h) dlclose(h);
+        return;
+    }
 
     char build_type[256]{};
     bool is_user_build = (__system_property_get("ro.build.type", build_type) > 0 &&
@@ -2526,7 +2553,7 @@ static void detectSelinuxDirtyPolicy() {
 
     std::vector<std::string> hits;
     for (int i = 0; rules[i].src; i++) {
-        if (strcmp(rules[i].label, "shell -> su transition") == 0 && !is_user_build) continue;
+        if (rules[i].user_only && !is_user_build) continue;
         int r1 = query(rules[i].src, rules[i].tgt, rules[i].cls, rules[i].perm);
         int r2 = query(rules[i].src, rules[i].tgt, rules[i].cls, rules[i].perm);
         if (r1 == 0 && r2 == 0)
@@ -2537,6 +2564,7 @@ static void detectSelinuxDirtyPolicy() {
         for (auto& h : hits) d += " [" + h + "]";
         add("selinux_dirty_policy", "DirtySepolicy Rule Detected", d);
     }
+    if (h_opened && h) dlclose(h);
 }
 
 extern "C" JNIEXPORT jobjectArray JNICALL
